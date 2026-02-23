@@ -1,0 +1,12 @@
+
+to check-absorbing
+  set frozen? true
+  ask turtles [
+    let active-neighbors neighbors with [
+      similarity myself > 0 and similarity myself < F
+    ]
+    if any? active-neighbors [
+      set frozen? false
+    ]
+  ]
+end
