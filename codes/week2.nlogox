@@ -12,10 +12,7 @@ to setup
   setup-grid
   initialize-culture
   create-neighbor-links
-  ;;update-borders-basic
   update-borders-advanced
-  ;update-borders-rgb
-  ;;ask turtles [ set color white ]
   reset-ticks
 end
 
@@ -29,8 +26,6 @@ to setup-grid
     ]
   ]
 end
-
-
 
 to initialize-culture
   ask turtles [
@@ -52,34 +47,6 @@ to create-neighbor-links
 end
 
 
-to go
-  if not interaction-possible? [
-    print "Absorbing state reached"
-    stop
-  ]
-  
-  one-event
-  ;;color-turtles      ;; 
-  ;;update-borders   ;; refresh link colors after cultural change
-  ;;update-borders-basic
-  update-borders-advanced
-  ;;update-borders-rgb
-  tick
-end
-
-to update-borders-basic
-  let threshold 0.8   ; adjust as needed
-  ask links [
-    set hidden? false   ; always visible
-    ifelse similarity end1 end2 >= threshold [
-      set color white    ; 9.9 in NetLogo, or you can use [255 255 255] with rgb
-    ] [
-      set color black    ; 0
-    ]
-    set thickness 0.05
-  ]
-end
-
 to update-borders-advanced
   ask links [
     set hidden? false
@@ -91,40 +58,14 @@ to update-borders-advanced
   ]
 end
 
-;; Set link color based on similarity between the two turtles it connects
-to update-borders
-  ask links [
-    ifelse similarity end1 end2 = F [
-      set hidden? true           ;; same culture → no border shown
-      set color white
-      set thickness 0.05 
-    ][
-      set hidden? false
-      set color black
-      set thickness 0.05         ;; visible border between different cultures
-    ]
-  ]
-end
-
-to update-borders-rgb
-  ask links [
-    set hidden? false
-    let s similarity end1 end2
-    let interaction-prob s / F
-    let intensity 255 * (1 - interaction-prob)   ; 0 = white, 255 = black
-    ;;print (word "Similarity(N): " interaction-prob " and intensity: " intensity)
-    set color (list intensity intensity intensity)
-    set thickness 0.05
-  ]
-end
-
-to color-turtles
-  ask turtles [
-    ;; Hash the culture list into a repeatable color
-    let culture-hash reduce [ [acc val] -> (acc * Q + val) ] culture
-    let hue-index (culture-hash mod 13)  ;; 13 distinct NetLogo base hues
-    set color (hue-index * 10 + 5)
-  ]
+to go
+  if not interaction-possible? [
+    print "Absorbing state reached"
+    stop
+  ]  
+  one-event
+  update-borders-advanced
+  tick
 end
 
 to one-event
@@ -183,8 +124,6 @@ to assimilate [a b]
     ask a [
      set culture new-culture 
     ]
-    ;;print (word "Before: " culture-a)
-    ;;print (word "After: " new-culture)
   ]
 end
 
@@ -209,12 +148,12 @@ to-report interaction-possible?
   report result
 end]]></code>
   <widgets>
-    <view x="630" wrappingAllowedX="false" y="25" frameRate="30.0" minPycor="-5" height="339" showTickCounter="true" patchSize="30.5" fontSize="10" wrappingAllowedY="false" width="339" tickCounterLabel="ticks" maxPycor="5" updateMode="0" maxPxcor="5" minPxcor="-5"></view>
-    <slider x="140" step="1" y="85" max="10" width="250" display="F" height="50" min="1" direction="Horizontal" default="1.0" variable="F"></slider>
-    <slider x="140" step="1" y="150" max="20" width="250" display="Q" height="50" min="2" direction="Horizontal" default="10.0" variable="Q"></slider>
-    <button x="40" y="15" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="55" display="setup">setup</button>
-    <button x="110" y="15" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="65" display="go-once">go</button>
-    <button x="190" y="15" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="55" display="go">go</button>
+    <view x="610" wrappingAllowedX="false" y="35" frameRate="30.0" minPycor="-5" height="299" showTickCounter="true" patchSize="26.82" fontSize="10" wrappingAllowedY="false" width="299" tickCounterLabel="ticks" maxPycor="5" updateMode="0" maxPxcor="5" minPxcor="-5"></view>
+    <button x="40" y="30" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="55" display="setup">setup</button>
+    <slider x="40" step="1" y="90" max="10" width="250" display="F" height="50" min="1" direction="Horizontal" default="2.0" variable="F"></slider>
+    <slider x="40" step="1" y="160" max="10" width="250" display="Q" height="50" min="2" direction="Horizontal" default="10.0" variable="Q"></slider>
+    <button x="120" y="30" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="65" display="go-once">go</button>
+    <button x="205" y="30" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="55" display="go">go</button>
   </widgets>
   <info>## WHAT IS IT?
 
