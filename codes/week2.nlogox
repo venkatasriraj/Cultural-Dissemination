@@ -1,17 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <model version="NetLogo 7.0.3" snapToGrid="true">
   <code><![CDATA[globals [
+  interaction-count
+  event-count
+  active-link-count
 ]
 
 turtles-own [
   culture   ;; will store list later
+  visited
+  neighbors-list
 ]
 
 to setup
   clear-all
+  set interaction-count 0
+  set event-count 0
   setup-grid
   initialize-culture
   create-neighbor-links
+  set active-link-count count links with [
+    (similarity end1 end2) > 0 and (similarity end1 end2) < F
+  ]
+  ;;update-turtle-colors
   update-borders-advanced
   reset-ticks
 end
@@ -27,25 +38,23 @@ to setup-grid
   ]
 end
 
-to initialize-culture
-  ask turtles [
-    set culture n-values F [ random Q ]
-  ]
-end
-
 to create-neighbor-links
   ask turtles [
-    let me self   ;; remember the current turtle
-    let neighbor-turtles turtles-on [ neighbors4 ] of me
-    ask neighbor-turtles [
-      ;; 'me' is the original turtle, 'self' is the neighbor
-      if [who] of me < who [    ;; avoid duplicate links
-        create-link-with me [ set color red ]
+    set neighbors-list sort (turtles-on neighbors4)  ;; store as list
+    let me self
+    foreach neighbors-list [ neighbor ->
+      if [who] of me < [who] of neighbor [
+        create-link-with neighbor [ set color red ]
       ]
     ]
   ]
 end
 
+to initialize-culture
+  ask turtles [
+    set culture n-values F [ random Q ]
+  ]
+end
 
 to update-borders-advanced
   ask links [
@@ -59,21 +68,46 @@ to update-borders-advanced
 end
 
 to go
-  if not interaction-possible? [
-    print "Absorbing state reached"
+  
+  if active-links = 0 [
+    show "Absorbing state reached"
+    show (word
+      "Events: " event-count
+      " | Interactions: " interaction-count
+      " | Interaction Rate: " interaction-rate
+      " | Active Links: " active-links
+      " | Unique Cultures: " unique-cultures
+      " | Regions: " number-of-regions )
     stop
-  ]  
-  one-event
-  update-borders-advanced
+  ]
+  
+  if event-count mod 50000 = 0 [
+    show (word
+      "Events: " event-count
+      " | Interactions: " interaction-count
+      " | Interaction Rate: " interaction-rate
+      " | Active Links: " active-links
+      " | Unique Cultures: " unique-cultures )
+  ]
+  
+  repeat 5000 [ one-event ]
+  ;;one-event
+  ;; Only redraw every 10 ticks
+  if ticks mod 100 = 0 [
+    update-turtle-colors
+    update-borders-advanced
+  ]
   tick
 end
 
 to one-event
+  set event-count event-count + 1 ;; included event-count i.e., choose agent + neighbor
+  
   let agent-i one-of turtles
+  ;;let neighbors-i turtles-on [ neighbors4 ] of agent-i ;; SLOW
+  let neighbors-i [neighbors-list] of agent-i  ;; FAST: pre-cached
   
-  let neighbors-i turtles-on [ neighbors4 ] of agent-i
-  
-  if any? neighbors-i[
+  if not empty? neighbors-i[
    let agent-j one-of neighbors-i
     
     let overlap similarity agent-i agent-j
@@ -82,8 +116,10 @@ to one-event
     if random-float 1 < interaction-prob [
       ;;print (word "Interaction between " agent-i " and " agent-j " with " interaction-prob)
       assimilate agent-i agent-j ;; interaction happens
+      ;;set interaction-count interaction-count + 1
     ]
   ]
+  
 end
 
 to-report similarity [ a b ]
@@ -103,55 +139,159 @@ to-report similarity [ a b ]
 end
 
 to assimilate [a b]
-  let culture-a [ culture ] of a
-  let culture-b [ culture ] of b
-  
-  let different-indices [] ;; Find indices where traits differ
-  
-  let index 0
-  ( foreach culture-a culture-b
-  [ [ traits-a traits-b] ->
-    if traits-a != traits-b [
-     set different-indices lput index different-indices
-    ]
-    set index index + 1
-  ])
-  ;; If there is at least one difference
-  if not empty? different-indices [
-   let chosen-index one-of different-indices
-    ;; Replace that feature
-    let new-culture replace-item chosen-index culture-a ( item chosen-index culture-b)
-    ask a [
-     set culture new-culture 
-    ]
+  let culture-a [culture] of a
+  let culture-b [culture] of b
+
+  ;; Pick a random differing feature directly
+  let chosen-index random F
+  let attempts 0
+  while [item chosen-index culture-a = item chosen-index culture-b and attempts < F] [
+    set chosen-index random F
+    set attempts attempts + 1
+  ]
+  if attempts = F [ stop ]  ;; no differences (shouldn't happen given interaction-prob check)
+
+  let support-i trait-support a chosen-index (item chosen-index culture-a)
+  let support-j trait-support b chosen-index (item chosen-index culture-b)
+  let switch-prob support-j / (support-i + support-j)
+
+  if random-float 1 < switch-prob [
+    ask a [ set culture replace-item chosen-index culture-a (item chosen-index culture-b) ]
+    set interaction-count interaction-count + 1
   ]
 end
 
 to-report interaction-possible?
-  
   let result false
-  
+
   ask turtles [
-    let neighbors-i turtles-on neighbors4 
-    
-    ask neighbors-i [
-     ;;neighbor ->
-      let overlap similarity myself self
-      ;;print (word "Overlap: " overlap)
-      
+    ask turtles-on neighbors4 [          ;; self = neighbor turtle
+      let overlap similarity myself self  ;; myself = outer turtle, self = neighbor
       if overlap > 0 and overlap < F [
-       set result true 
+        set result true
       ]
     ]
   ]
-  
+
   report result
+end
+
+to-report trait-support [agent feature-index trait-value]
+  let cnt 0
+  if item feature-index ([culture] of agent) = trait-value [ set cnt cnt + 1 ]
+  foreach (sort [neighbors-list] of agent) [ neighbor ->
+    if item feature-index ([culture] of neighbor) = trait-value [ set cnt cnt + 1 ]
+  ]
+  report cnt
+end
+
+to-report interaction-rate
+  if event-count = 0 [ report 0 ]
+  report interaction-count / event-count
+end
+
+to-report active-links
+  let count1 0
+
+  ask turtles [
+    ask turtles-on neighbors4 [
+      let overlap similarity myself self
+      if overlap > 0 and overlap < F [
+        set count1 count1 + 1
+      ]
+    ]
+  ]
+  report count1 / 2
+end
+
+to-report unique-cultures
+  report length remove-duplicates [culture] of turtles
+end
+
+to-report number-of-regions
+
+  ask turtles [ set visited false ]
+  let regions 0
+
+  while [any? turtles with [not visited]] [
+
+    let seed one-of turtles with [not visited]
+
+    set regions regions + 1
+
+    grow-region seed
+  ]
+  report regions
+end
+
+to grow-region [seed]
+
+  let target [culture] of seed
+  let frontier (list seed)
+
+  while [length frontier > 0] [
+
+    let current first frontier
+    set frontier but-first frontier
+    ask current [
+      if not visited [
+        set visited true
+        let same-neighbors (turtles-on neighbors4) with [
+          culture = target and not visited
+        ]
+        set frontier sentence frontier sort same-neighbors
+      ]
+    ]
+  ]
+end
+
+to flood-fill [start-turtle]
+  let target-culture [culture] of start-turtle
+  let stack (list start-turtle)
+
+  while [length stack > 0] [
+    let current first stack
+    set stack but-first stack
+
+    ask current [
+      if not visited [
+        set visited true
+
+        let neighbors-with-same-culture
+          (turtles-on neighbors4) with [culture = target-culture]  ;; fix: parentheses
+
+        set stack sentence stack sort neighbors-with-same-culture  ;; sort to convert agentset to list
+      ]
+    ]
+  ]
+end
+
+to-report culture-color [culture-list]
+
+  let hash 0
+  foreach culture-list [ t ->
+    set hash (hash * 7 + t)
+  ]
+  report (hash mod 140)
+end
+
+to update-turtle-colors
+  ask turtles [
+    set color culture-color culture
+  ]
+end
+
+to update-active-links-for [agent]
+  ask [my-links] of agent [
+    let ov similarity end1 end2
+    ;; adjust active-link-count based on before/after state
+  ]
 end]]></code>
   <widgets>
-    <view x="610" wrappingAllowedX="false" y="35" frameRate="30.0" minPycor="-5" height="299" showTickCounter="true" patchSize="26.82" fontSize="10" wrappingAllowedY="false" width="299" tickCounterLabel="ticks" maxPycor="5" updateMode="0" maxPxcor="5" minPxcor="-5"></view>
+    <view x="575" wrappingAllowedX="false" y="10" frameRate="30.0" minPycor="-10" height="374" showTickCounter="true" patchSize="17.62" fontSize="10" wrappingAllowedY="false" width="374" tickCounterLabel="ticks" maxPycor="10" updateMode="0" maxPxcor="10" minPxcor="-10"></view>
     <button x="40" y="30" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="55" display="setup">setup</button>
-    <slider x="40" step="1" y="90" max="10" width="250" display="F" height="50" min="1" direction="Horizontal" default="2.0" variable="F"></slider>
-    <slider x="40" step="1" y="160" max="10" width="250" display="Q" height="50" min="2" direction="Horizontal" default="10.0" variable="Q"></slider>
+    <slider x="40" step="1" y="90" max="10" width="250" display="F" height="50" min="1" direction="Horizontal" default="3.0" variable="F"></slider>
+    <slider x="40" step="1" y="160" max="10" width="250" display="Q" height="50" min="2" direction="Horizontal" default="5.0" variable="Q"></slider>
     <button x="120" y="30" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="65" display="go-once">go</button>
     <button x="205" y="30" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="55" display="go">go</button>
   </widgets>
