@@ -7,6 +7,16 @@
   
   prev-interaction-rate   ;; NEW
   stable-count            ;; NEW
+  
+  ;; ===== NEW METRICS =====
+  rho1
+  rho2
+  rho3
+]
+
+; added on 8/4
+links-own[
+ is-active? 
 ]
 
 turtles-own [
@@ -28,11 +38,20 @@ to setup
   initialize-culture
   assign-stubborn-agents   ;; NEW LINE
   create-neighbor-links
-  set active-link-count count links with [
-    (similarity end1 end2) > 0 and (similarity end1 end2) < F
+
+  set active-link-count 0
+  ask links [
+    let ov similarity end1 end2
+    if (ov > 0 and ov < F) [
+      set is-active? true
+      set active-link-count active-link-count + 1
+    ]
+    if not (ov > 0 and ov < F) [
+      set is-active? false
+    ]
   ]
-  update-turtle-colors
-  update-borders-advanced
+;   update-turtle-colors
+  update-link-colors-simple
   reset-ticks
 end
 
@@ -46,15 +65,9 @@ to setup-grid
   ]
 end
 
-to create-neighbor-links
+to initialize-culture
   ask turtles [
-    set neighbors-list sort (turtles-on neighbors4)  ;; store as list
-    let me self
-    foreach neighbors-list [ neighbor ->
-      if [who] of me < [who] of neighbor [
-        create-link-with neighbor [ set color red ]
-      ]
-    ]
+    set culture n-values F [ random Q ]
   ]
 end
 
@@ -69,77 +82,150 @@ to assign-stubborn-agents ;; STUBBORN AGENTS
   ]
 end
 
-to initialize-culture
+to create-neighbor-links
   ask turtles [
-    set culture n-values F [ random Q ]
+    set neighbors-list shuffle sort (turtles-on neighbors4)  ;; store as list
+    let me self
+    foreach neighbors-list [ neighbor ->
+      if [who] of me < [who] of neighbor [
+        create-link-with neighbor [ set color red ]
+      ]
+    ]
   ]
 end
 
-to update-borders-advanced
+to update-link-colors-simple
   ask links [
-    set hidden? false
-    let s similarity end1 end2   ; assume s is between 0 and 1
-    let interaction-prob s / F
-    let grey-level 9.9 * (1 - interaction-prob)  ; 0 = black, 9.9 = white
-    set color grey-level
-    set thickness 1
+    let ov similarity end1 end2
+    
+    if ov = F [
+      set color white   ;; same culture → same region
+    ]
+    
+    if ov < F [
+      set color black   ;; boundary / different region
+    ]
+    
+    set thickness 0.5
   ]
 end
 
+
+;; --------------------   go procedure  -----------------
 to go
-  ;; --- stopping condition 1: max ticks ---
-  if ticks > max-ticks [
-    show "Stopped: max ticks reached"
-    update-turtle-colors
-    update-borders-advanced
-    stop
-  ]
+  let should-stop? false
+  let stop-reason ""
 
-  ;; --- stopping condition 2: epsilon stability ---
-  let current-rate interaction-rate
-
-  if abs(current-rate - prev-interaction-rate) < epsilon [
-    set stable-count stable-count + 1
-  ]
+  ;; ==========================================
+  ;; CHECK STOPPING CONDITIONS
+  ;; ==========================================
   
-  if abs(current-rate - prev-interaction-rate) >= epsilon [
-    set stable-count 0
+  ;; Condition 1: Max Ticks
+  if ticks >= max-ticks [
+    set should-stop? true
+    set stop-reason "Max ticks reached"
   ]
 
-  set prev-interaction-rate current-rate
+  ;; Condition 2: Epsilon Stability 
+  ;; (Only check if we aren't already stopping)
+  if not should-stop? [
+    let current-rate interaction-rate
+    if use-stubborn?[
+      
+      ifelse abs(current-rate - prev-interaction-rate) < epsilon [
+        set stable-count stable-count + 1
+      ] [
+        set stable-count 0
+      ]
+      set prev-interaction-rate current-rate
 
-  if stable-count > stability-window [
+      if stable-count > stability-window [
+        set should-stop? true
+        set stop-reason "Stabilized (epsilon threshold reached)"
+      ]
+    ]
+    
+  ]   
+
+  ;; Condition 3: Absorbing State
+  if not should-stop? and active-link-count = 0 [
+    set should-stop? true
+    set stop-reason "Absorbing state reached (active links depleted)"
+  ]
+
+  ;; ==========================================
+  ;; EXECUTE FINALIZATION IF STOPPED
+  ;; ==========================================
+  if should-stop? [
+    
+;     update-borders-advanced
+      
+    ;; --- OPTIMIZED DATA COLLECTION ---
+    let all-sizes zone-size-distribution ;; Run the heavy algorithm ONCE
+    let num-regions length all-sizes
+    let max-size max all-sizes
+    let total-turtles count turtles
+      
+    ;; ===== COMPUTE METRICS =====
+;     set rho1 compute-rho1
+;     set rho2 compute-rho2
+;     set rho3 compute-rho3
+    
+    update-plots ;; Triggers the 'histogram zone-size-distribution' command in the plot
+      
+    ;; --- PRINT REQUIRED OUTPUTS ---
+    show (word "STOPPED: " stop-reason)
+    show (word
+      "Events: " event-count
+      " | Interactions: " interaction-count
+      " | Regions: " num-regions 
+      " | Largest Region Fraction: " (max-size / total-turtles)
+;       " | Rho1: " rho1
+;       " | Rho2: " rho2
+;       " | Rho3: " rho3
+    )
+    
+    ;; Print if further interactions are possible
+    ifelse active-link-count > 0 [
+      show "STATUS: Further interactions ARE still possible (active links remain)."
+    ] [
+      show "STATUS: No further interactions are possible (0 active links)."
+    ]
+    
     update-turtle-colors
-    update-borders-advanced
-    show "Stopped: stabilized (epsilon reached)"
+    update-link-colors-simple
+    
+    stop ;; Terminate the 'go' procedure
+  ]
+
+  ;; ==========================================
+  ;; PERIODIC LOGGING (If continuing)
+  ;; ==========================================
+  if event-count mod 500000 = 0 and event-count > 0 [
     show (word
       "Events: " event-count
       " | Interactions: " interaction-count
       " | Interaction Rate: " interaction-rate
-      " | Active Links: " active-links
-      " | Unique Cultures: " unique-cultures
-      " | Regions: " number-of-regions 
-      " | Largest Region: " largest-region-fraction)
-    stop
-  ]
-
-  
-  if event-count mod 500000 = 0 [
-    show (word
-      "Events: " event-count
-      " | Interactions: " interaction-count
-      " | Interaction Rate: " interaction-rate
-      " | Active Links: " active-links
+      " | Active Links: " active-link-count
       " | Unique Cultures: " unique-cultures )
   ]
   
-  repeat 100000 [ one-event ]
+  ;; ==========================================
+  ;; EXECUTION (BATCHING EVENTS)
+  ;; ==========================================
+  let events-this-tick 0
+  while [ events-this-tick < 100000 and active-link-count > 0 ] [
+    one-event
+    set events-this-tick events-this-tick + 1
+  ]
+;   one-event
+  update-turtle-colors
   tick
 end
 
 to one-event
   set event-count event-count + 1 ;; included event-count i.e., choose agent + neighbor
-  
+    
   let agent-i one-of turtles
   let neighbors-i [neighbors-list] of agent-i  ;; FAST: pre-cached
   if empty? neighbors-i [ stop ] 
@@ -154,7 +240,6 @@ to one-event
       assimilate agent-i agent-j ;; interaction happens
     ]
   ]
-  
 end
 
 to-report similarity [ a b ]
@@ -172,50 +257,53 @@ to-report similarity [ a b ]
 end
 
 to assimilate [a b]
+  
   ;; STUBBORN RULE
   if [stubborn?] of a [ stop ]   ;; a will never change
-  ;;if [stubborn?] of b [ stop ]   ;; b will never change
   
   let culture-a [culture] of a
   let culture-b [culture] of b
+  
+  let diff-indices []
 
-  let chosen-index random F
-  let attempts 0
-  while [item chosen-index culture-a = item chosen-index culture-b and attempts < F] [
-    set chosen-index random F
-    set attempts attempts + 1
+  (let i 0)
+  while [i < F] [
+    if item i culture-a != item i culture-b [
+      set diff-indices lput i diff-indices
+    ]
+    set i i + 1
   ]
-  if attempts = F [ stop ]  ;; no differences (shouldn't happen given interaction-prob check)
+  
+  if empty? diff-indices [ stop ]
+  
+  let chosen-index one-of diff-indices
 
-  let support-i trait-support a chosen-index (item chosen-index culture-a) a
-  let support-j trait-support b chosen-index (item chosen-index culture-b) a
+  ; let support-i trait-support a chosen-index (item chosen-index culture-a) a
+  
+  let support-i trait-support a chosen-index (item chosen-index culture-a) 
+  let support-j 0
+  ifelse support-b?[    
+    set support-j trait-support b chosen-index (item chosen-index culture-b) 
+  ][
+    set support-j trait-support a chosen-index (item chosen-index culture-b) 
+  ]
+  
+;   let support-i trait-support a chosen-index (item chosen-index culture-a) 
+;   let support-j trait-support a chosen-index (item chosen-index culture-b) 
   let switch-prob support-j / (support-i + support-j)
 
-  if random-float 1 < ( (1 - alpha) * switch-prob + alpha ) [
+  if random-float 1 < ( ( 1 - alpha ) * switch-prob + alpha ) [
     ask a [ set culture replace-item chosen-index culture-a (item chosen-index culture-b) ]
-    update-active-links-for a
+    update-active-links-local a
     set interaction-count interaction-count + 1
+
   ]
 end
 
-to-report interaction-possible?
-  let result false
-
-  ask turtles [
-    ask turtles-on neighbors4 [          ;; self = neighbor turtle
-      let overlap similarity myself self  ;; myself = outer turtle, self = neighbor
-      if overlap > 0 and overlap < F [
-        set result true
-      ]
-    ]
-  ]
-  report result
-end
-
-to-report trait-support [agent feature-index trait-value ref-agent]
+to-report trait-support [agent feature-index trait-value] ;ref-agent
   let cnt 0
   if item feature-index ([culture] of agent) = trait-value [ set cnt cnt + 1 ]
-  foreach (sort [neighbors-list] of ref-agent) [ neighbor ->
+  foreach (shuffle sort [neighbors-list] of agent) [ neighbor ->
     if item feature-index ([culture] of neighbor) = trait-value [ set cnt cnt + 1 ]
   ]
   report cnt
@@ -224,24 +312,6 @@ end
 to-report interaction-rate
   if event-count = 0 [ report 0 ]
   report interaction-count / event-count
-end
-
-; to-report active-links
-;   report active-link-count
-; end
-
-to-report active-links
-  let count1 0
-
-  ask turtles [
-    ask turtles-on neighbors4 [
-      let overlap similarity myself self
-      if overlap > 0 and overlap < F [
-        set count1 count1 + 1
-      ]
-    ]
-  ]
-  report count1 / 2
 end
 
 to-report unique-cultures
@@ -281,26 +351,6 @@ to grow-region [seed]
   ]
 end
 
-to flood-fill [start-turtle]
-  let target-culture [culture] of start-turtle
-  let stack (list start-turtle)
-
-  while [length stack > 0] [
-    let current first stack
-    set stack but-first stack
-    
-    ask current [
-      if not visited [
-        set visited true
-
-        let neighbors-with-same-culture
-          (turtles-on neighbors4) with [culture = target-culture]  ;; fix: parentheses
-        set stack sentence stack sort neighbors-with-same-culture  ;; sort to convert agentset to list
-      ]
-    ]
-  ]
-end
-
 to-report culture-color [culture-list]
 
   let hash 0
@@ -326,110 +376,40 @@ to update-turtle-colors
   ]
 end
 
-to update-active-links-for [agent]
-  ask [my-links] of agent [
+to update-active-links-local [a]
+
+  ;; update links of a
+  ask [my-links] of a [
+    update-link-state self
+  ]
+end
+
+to update-link-state [lnk]
+
+  ask lnk [
+    let was-active is-active?
     let ov similarity end1 end2
-;     let before ((similarity end1 end2) > 0 and (similarity end1 end2) < F)
+    let now-active (ov > 0 and ov < F)
 
-;     let s similarity end1 end2
-;     let after (s > 0 and s < F)
-
-;     if before and not after [
-;       set active-link-count active-link-count - 1
-;     ]
-
-;     if not before and after [
-;       set active-link-count active-link-count + 1
-;     ]
-  ]
-end
-
-;;    -------------------   Start Phase 3   -----------------------
-
-to-report run-model
-  setup
-  
-  while [ticks <= max-ticks] [
-    
-    let current-rate interaction-rate
-
-    if abs(current-rate - prev-interaction-rate) < epsilon [
-      set stable-count stable-count + 1
+    ;; update count
+    if (was-active and not now-active) [
+      set active-link-count max list 0 (active-link-count - 1)
     ]
-    
-    if abs(current-rate - prev-interaction-rate) >= epsilon [
-      set stable-count 0
+    if (not was-active and now-active) [
+      set active-link-count active-link-count + 1
     ]
 
-    set prev-interaction-rate current-rate
+    set is-active? now-active
 
-    ;; FIX: replace stop with report
-    if stable-count > stability-window [
-      
-      update-turtle-colors
-      update-borders-advanced
-      
-      report (list
-        event-count
-        interaction-count
-        interaction-rate
-        number-of-regions
-        unique-cultures
-      )
-    ]
-
-    one-event
-    tick
+    ;; visual (optional)
+    if ov = F [ set color white ]
+    if ov = 0 [ set color black ]
+    if ov > 0 and ov < F [ set color green ]
   ]
-  
-;   while [active-links > 0] [
-;     one-event
-;   ]
-  
-  update-turtle-colors
-  update-borders-advanced
-  
-  report (list
-    event-count
-    interaction-count
-    interaction-rate
-    number-of-regions
-    unique-cultures
-  )
 
 end
 
-to-report run-experiments [runs]
-  let results []
 
-  repeat runs [
-    set results lput (run-model) results
-  ]
-  report results
-end
-
-to-report average [lst]
-  report mean lst
-end
-
-to-report summarize-results [results]
-
-  let events map [r -> item 0 r] results
-  let interactions map [r -> item 1 r] results
-  let rates map [r -> item 2 r] results
-  let cultures map [r -> item 4 r] results
-  let regions map [r -> item 5 r] results
-  report (list
-    average events
-    average interactions
-    average rates
-    average cultures
-    average regions)
-end
-
-to-report absorbing?
-  report active-links = 0
-end
 
 ;;  ---------------  find the size of largets region ---------------
 to-report grow-region-size [seed]
@@ -477,21 +457,281 @@ end
 
 to-report largest-region-fraction
   report largest-region-size / count turtles
+end
+
+to-report zone-size-distribution
+
+  ask turtles [ set visited false ]
+  let sizes []
+
+  while [any? turtles with [not visited]] [
+    let seed one-of turtles with [not visited]
+    let s grow-region-size seed
+    set sizes lput s sizes
+  ]
+
+  report sizes
+end
+to-report zone-size-histogram
+  let sizes zone-size-distribution
+  let unique-sizes remove-duplicates sizes
+  
+  ;; This does the exact same thing as your loop in one line
+  report map [ s -> list s (length filter [x -> x = s] sizes) ] unique-sizes
+end
+
+
+
+;;    -------------------   Start Phase 3   -----------------------
+
+to-report run-model
+  setup
+  
+  while [active-link-count > 0] [
+    one-event
+  ]
+
+  report (list
+    event-count
+    interaction-count
+    interaction-rate
+    number-of-regions
+    unique-cultures
+    largest-region-fraction  
+  )
+
+end
+
+to-report run-experiments [runs]
+  let results []
+
+  repeat runs [
+    set results lput (run-model) results
+  ]
+  report results
+end
+
+to-report average [lst]
+  report mean lst
+end
+
+to-report summarize-results [results]
+
+  let events map [r -> item 0 r] results
+  let interactions map [r -> item 1 r] results
+  let rates map [r -> item 2 r] results
+  let regions map [r -> item 3 r] results
+  let cultures map [r -> item 4 r] results
+  let largest map [r -> item 5 r] results 
+  report (list
+    average events
+    average interactions
+    average rates
+    average regions
+    average cultures
+    average largest)
+end
+
+to-report absorbing?
+  report active-links = 0
+end
+
+;; ------------------------------   METRICS  ------------------------------
+
+to-report compute-rho1
+  let total-dissimilarity 0
+  let total-links 0
+
+  ask turtles [
+    let my-culture culture
+    foreach neighbors-list [ nbr ->
+      let overlap similarity self nbr
+      set total-dissimilarity total-dissimilarity + (1 - overlap / F)
+      set total-links total-links + 1
+    ]
+  ]
+
+  if total-links = 0 [ report 0 ]
+  report total-dissimilarity / total-links
+end
+
+to-report compute-rho2
+  let sizes zone-size-distribution
+  let sizes-sorted sort sizes
+
+  let N world-width
+  let Ni N
+  let entropy 0
+
+  foreach sizes-sorted [
+    s ->
+    let term (Ni - sqrt s + 1)
+    if term > 0 [
+      set entropy entropy + ln term
+    ]
+    set Ni sqrt (Ni * Ni - s)
+  ]
+
+  ;; Stirling approximation (IMPORTANT)
+  let total count turtles
+  let max-entropy (total * ln total - total)
+
+  if max-entropy = 0 [ report 0 ]
+  report entropy / max-entropy
+end
+
+to-report compute-rho3
+  ask turtles [ set visited false ]
+  
+  let sizes []
+  let boundaries []
+  
+  while [any? turtles with [not visited]] [
+    let seed one-of turtles with [not visited]
+    let zone (get-zone seed)
+    
+    let S length zone
+    let B 0
+    
+    foreach zone [ t ->
+      ask t [
+        foreach neighbors-list [ nbr ->
+          if not member? nbr zone [
+            set B B + 1
+          ]
+        ]
+      ]
+    ]
+    
+    set sizes lput S sizes
+    set boundaries lput B boundaries
+  ]
+
+  let M length sizes
+  if M = 0 [ report 0 ]
+
+  let total 0
+  (foreach sizes boundaries [
+    [s b] ->
+    let denom (4 * sqrt s)
+    if denom > 0 [
+      set total total + (b / denom)
+    ]
+  ])
+
+  report (total / M) - 1
+end
+
+to-report get-zone [seed]
+  let target [culture] of seed
+  let frontier (list seed)
+  let zone []
+
+  while [length frontier > 0] [
+    let current first frontier
+    set frontier but-first frontier
+
+    if not member? current zone [
+      set zone lput current zone
+
+      ask current [
+        let same-neighbors (turtles-on neighbors4) with [
+          culture = target
+        ]
+        set frontier sentence frontier sort same-neighbors
+      ]
+    ]
+  ]
+
+  report zone
+end
+
+
+
+
+;   --------------------------------      Not in use     -----------------------------
+to-report interaction-possible?
+  let result false
+
+  ask turtles [
+    ask turtles-on neighbors4 [          ;; self = neighbor turtle
+      let overlap similarity myself self  ;; myself = outer turtle, self = neighbor
+      if overlap > 0 and overlap < F [
+        set result true
+      ]
+    ]
+  ]
+  report result
+end
+
+to-report active-links
+  let count1 0
+
+  ask turtles [
+    ask turtles-on neighbors4 [
+      let overlap similarity myself self
+      if overlap > 0 and overlap < F [
+        set count1 count1 + 1
+      ]
+    ]
+  ]
+  report count1 / 2
+end
+
+to flood-fill [start-turtle]
+  let target-culture [culture] of start-turtle
+  let stack (list start-turtle)
+
+  while [length stack > 0] [
+    let current first stack
+    set stack but-first stack
+    
+    ask current [
+      if not visited [
+        set visited true
+
+        let neighbors-with-same-culture
+          (turtles-on neighbors4) with [culture = target-culture]  ;; fix: parentheses
+        set stack sentence stack sort neighbors-with-same-culture  ;; sort to convert agentset to list
+      ]
+    ]
+  ]
+end
+
+to update-borders-advanced
+  ask links [
+    set hidden? false
+    let s similarity end1 end2   ; assume s is between 0 and 1
+    let interaction-prob s / F
+    let grey-level 9.9 * (1 - interaction-prob)  ; 0 = black, 9.9 = white
+    set color grey-level
+    set thickness 1
+  ]
 end]]></code>
   <widgets>
-    <view x="1075" wrappingAllowedX="false" y="25" frameRate="30.0" minPycor="0" height="394" showTickCounter="true" patchSize="13.0" fontSize="10" wrappingAllowedY="false" width="394" tickCounterLabel="ticks" maxPycor="29" updateMode="0" maxPxcor="29" minPxcor="0"></view>
-    <button x="30" y="30" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="55" display="setup">setup</button>
-    <slider x="30" step="1" y="90" max="10" width="250" display="F" height="50" min="1" direction="Horizontal" default="5.0" variable="F"></slider>
-    <button x="100" y="30" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="65" display="go-once">go</button>
-    <button x="180" y="30" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="55" display="go">go</button>
-    <slider x="300" step="1" y="90" max="20" width="250" display="Q" height="50" min="2" direction="Horizontal" default="10.0" variable="Q"></slider>
-    <slider x="30" step="0.1" y="170" max="1" width="250" display="alpha" height="50" min="0" direction="Horizontal" default="0.0" variable="alpha"></slider>
-    <slider x="30" step="0.05" y="245" max="0.4" width="250" display="stubborn-fraction" height="50" min="0" direction="Horizontal" default="0.1" variable="stubborn-fraction"></slider>
-    <slider x="310" step="5" y="170" max="50" width="250" display="grid-size" height="50" min="5" direction="Horizontal" default="30.0" variable="grid-size"></slider>
-    <slider x="300" step="100000" y="245" max="700000000" width="250" display="max-ticks" height="50" min="1000000" direction="Horizontal" default="7.0E7" variable="max-ticks"></slider>
-    <switch x="255" y="30" height="40" on="false" variable="use-stubborn?" width="110" display="use-stubborn?"></switch>
-    <slider x="25" step="0.0005" y="320" max="0.1" width="250" display="epsilon" height="50" min="0" direction="Horizontal" default="0.0" variable="epsilon"></slider>
-    <slider x="300" step="1" y="325" max="30" width="250" display="stability-window" height="50" min="1" direction="Horizontal" default="20.0" variable="stability-window"></slider>
+    <view x="590" wrappingAllowedX="true" y="45" frameRate="30.0" minPycor="0" height="394" showTickCounter="true" patchSize="13.0" fontSize="10" wrappingAllowedY="true" width="394" tickCounterLabel="ticks" maxPycor="29" updateMode="0" maxPxcor="29" minPxcor="0"></view>
+    <button x="25" y="50" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="55" display="setup">setup</button>
+    <button x="100" y="50" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="65" display="go-once">go</button>
+    <button x="185" y="50" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="55" display="go">go</button>
+    <switch x="270" y="50" height="40" on="false" variable="use-stubborn?" width="106" display="use-stubborn?"></switch>
+    <slider x="25" step="1" y="115" max="10" width="250" display="F" height="50" min="1" direction="Horizontal" default="3.0" variable="F"></slider>
+    <slider x="295" step="1" y="115" max="20" width="250" display="Q" height="50" min="1" direction="Horizontal" default="10.0" variable="Q"></slider>
+    <slider x="20" step="0.1" y="195" max="1" width="250" display="alpha" height="50" min="0" direction="Horizontal" default="0.0" variable="alpha"></slider>
+    <slider x="300" step="5" y="195" max="50" width="250" display="grid-size" height="50" min="5" direction="Horizontal" default="30.0" variable="grid-size"></slider>
+    <slider x="20" step="0.1" y="275" max="0.5" width="250" display="stubborn-fraction" height="50" min="0" direction="Horizontal" default="0.1" variable="stubborn-fraction"></slider>
+    <slider x="300" step="100000" y="275" max="100000000" width="250" display="max-ticks" height="50" min="0" direction="Horizontal" default="7.0E7" variable="max-ticks"></slider>
+    <slider x="20" step="0.0005" y="355" max="0.1" width="250" display="epsilon" height="50" min="0" direction="Horizontal" default="5.0E-4" variable="epsilon"></slider>
+    <slider x="300" step="1" y="355" max="30" width="250" display="stability-window" height="50" min="1" direction="Horizontal" default="20.0" variable="stability-window"></slider>
+    <plot x="1030" autoPlotX="true" yMax="5.0" autoPlotY="false" yAxis="Number of Occurrences" y="75" xMin="0.0" height="315" legend="true" xMax="10.0" yMin="0.0" width="410" xAxis="Frozen Zone Sizes" display="zone distribution">
+      <setup>set-plot-x-range 1 ( (grid-size * grid-size) + 10) ;; or a reasonable max size</setup>
+      <update>histogram zone-size-distribution</update>
+      <pen interval="5.0" mode="1" display="pen-0" color="-15390905" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+    </plot>
+    <switch x="395" y="55" height="40" on="false" variable="support-b?" width="90" display="support-b?"></switch>
+    <monitor x="1025" precision="17" y="405" height="60" fontSize="11" width="100">compute-rho1</monitor>
   </widgets>
   <info>## WHAT IS IT?
 
@@ -1364,7 +1604,7 @@ end]]></code>
   </linkShapes>
   <previewCommands>setup repeat 75 [ go ]</previewCommands>
   <experiments>
-    <experiment name="table1_replication" repetitions="30" sequentialRunOrder="true" runMetricsEveryStep="true">
+    <experiment name="experiment" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="true">
       <setup>setup</setup>
       <go>go</go>
       <exitCondition>active-links = 0</exitCondition>
@@ -1374,68 +1614,13 @@ end]]></code>
         <metric>interaction-rate</metric>
         <metric>unique-cultures</metric>
         <metric>number-of-regions</metric>
-      </metrics>
-      <constants>
-        <enumeratedValueSet variable="Q">
-          <value value="10"></value>
-        </enumeratedValueSet>
-        <enumeratedValueSet variable="F">
-          <value value="5"></value>
-        </enumeratedValueSet>
-      </constants>
-    </experiment>
-    <experiment name="experiment5" repetitions="30" sequentialRunOrder="true" runMetricsEveryStep="true">
-      <setup>setup</setup>
-      <go>go</go>
-      <exitCondition>active-links = 0</exitCondition>
-      <metrics>
-        <metric>event-count</metric>
-        <metric>interaction-count</metric>
-        <metric>interaction-rate</metric>
-        <metric>unique-cultures</metric>
-        <metric>number-of-regions</metric>
-      </metrics>
-      <constants>
-        <enumeratedValueSet variable="Q">
-          <value value="10"></value>
-        </enumeratedValueSet>
-        <enumeratedValueSet variable="F">
-          <value value="5"></value>
-        </enumeratedValueSet>
-        <enumeratedValueSet variable="world-width">
-          <value value="5"></value>
-        </enumeratedValueSet>
-        <enumeratedValueSet variable="world-height">
-          <value value="5"></value>
-        </enumeratedValueSet>
-      </constants>
-    </experiment>
-    <experiment name="stubborn_sweep" repetitions="100" sequentialRunOrder="true" runMetricsEveryStep="true">
-      <setup>setup</setup>
-      <go>go</go>
-      <metrics>
-        <metric>interaction-rate</metric>
-        <metric>number-of-regions</metric>
-        <metric>unique-cultures</metric>
-        <metric>active-links</metric>
-        <metric>event-count</metric>
         <metric>largest-region-fraction</metric>
-        <metric>interaction-count</metric>
       </metrics>
       <constants>
-        <enumeratedValueSet variable="epsilon">
-          <value value="0.001"></value>
+        <enumeratedValueSet variable="grid-size">
+          <value value="30"></value>
         </enumeratedValueSet>
         <enumeratedValueSet variable="Q">
-          <value value="10"></value>
-        </enumeratedValueSet>
-        <enumeratedValueSet variable="max-ticks">
-          <value value="35000000"></value>
-        </enumeratedValueSet>
-        <enumeratedValueSet variable="use-stubborn?">
-          <value value="true"></value>
-        </enumeratedValueSet>
-        <enumeratedValueSet variable="stability-window">
           <value value="10"></value>
         </enumeratedValueSet>
         <enumeratedValueSet variable="F">
@@ -1444,11 +1629,8 @@ end]]></code>
         <enumeratedValueSet variable="alpha">
           <value value="0"></value>
         </enumeratedValueSet>
-        <enumeratedValueSet variable="stubborn-fraction">
-          <value value="0.4"></value>
-        </enumeratedValueSet>
-        <enumeratedValueSet variable="grid-size">
-          <value value="30"></value>
+        <enumeratedValueSet variable="support-b?">
+          <value value="true"></value>
         </enumeratedValueSet>
       </constants>
     </experiment>

@@ -1,0 +1,492 @@
+globals [
+  interaction-count
+  event-count
+  active-link-count
+]
+
+; added on 8/4
+links-own[
+ is-active? 
+]
+
+turtles-own [
+  culture  
+  visited
+  neighbors-list
+]
+
+to setup
+  clear-all
+  resize-world 0 (grid-size - 1) 0 (grid-size - 1)
+  set interaction-count 0
+  set event-count 0
+  setup-grid
+  print (word "world width: " world-width " height: " world-height)
+  initialize-culture
+  create-neighbor-links
+;   set active-link-count count links with [
+;     (similarity end1 end2) > 0 and (similarity end1 end2) < F
+;   ]
+  set active-link-count 0
+  ask links [
+    let ov similarity end1 end2
+    if (ov > 0 and ov < F) [
+      set is-active? true
+      set active-link-count active-link-count + 1
+    ]
+    if not (ov > 0 and ov < F) [
+      set is-active? false
+    ]
+  ]
+;   update-borders-advanced
+  update-link-colors-simple
+  reset-ticks
+end
+
+to setup-grid
+  ask patches [
+    sprout 1 [
+      set shape "square"
+      set size 0.95
+      set color white
+    ]
+  ]
+end
+
+to create-neighbor-links
+  ask turtles [
+    set neighbors-list sort (turtles-on neighbors4)  ;; store as list
+    let me self
+    foreach neighbors-list [ neighbor ->
+      if [who] of me < [who] of neighbor [
+        create-link-with neighbor [ set color red ]
+      ]
+    ]
+  ]
+end
+
+to initialize-culture
+  ask turtles [
+    set culture n-values F [ random Q ]
+  ]
+end
+
+to update-borders-advanced
+  ask links [
+    set hidden? false
+    let s similarity end1 end2   ; assume s is between 0 and 1
+    let interaction-prob s / F
+    let grey-level 9.9 * (1 - interaction-prob)  ; 0 = black, 9.9 = white
+    set color grey-level
+    set thickness 1
+  ]
+end
+
+to update-link-colors-simple
+  ask links [
+    let ov similarity end1 end2
+    
+    if ov = F [
+      set color white   ;; same culture → same region
+    ]
+    
+    if ov < F [
+      set color black   ;; boundary / different region
+    ]
+    
+    set thickness 0.5
+  ]
+end
+
+to go
+  
+  repeat 100000 [ 
+    if active-link-count = 0 [ 
+      update-turtle-colors
+    update-link-colors-simple
+    
+    ;; --- OPTIMIZED DATA COLLECTION ---
+    let all-sizes zone-size-distribution ;; Run the heavy algorithm ONCE
+    let num-regions length all-sizes
+    let max-size max all-sizes
+    let total-turtles count turtles
+    
+    update-plots ;; This triggers the 'histogram zone-size-distribution' command in the plot
+    
+    show "Absorbing state reached"
+    show (word
+      "Events: " event-count
+      " | Interactions: " interaction-count
+      " | Regions: " num-regions 
+      " | Largest Region Fraction: " (max-size / total-turtles))
+      stop
+    ]
+    one-event 
+  ]
+  update-turtle-colors
+  tick
+end
+
+to one-event
+  set event-count event-count + 1 ;; included event-count i.e., choose agent + neighbor
+  
+  
+  let agent-i one-of turtles
+  let neighbors-i [neighbors-list] of agent-i  ;; FAST: pre-cached
+  if empty? neighbors-i [ stop ] 
+  
+  if not empty? neighbors-i[
+   let agent-j one-of neighbors-i
+    
+    let overlap similarity agent-i agent-j
+    let interaction-prob overlap / F
+    
+    if random-float 1 < interaction-prob [
+      assimilate agent-i agent-j ;; interaction happens
+    ]
+  ]
+  
+end
+
+to-report similarity [ a b ]
+  let overlap 0
+  let culture-a [ culture ] of a
+  let culture-b [ culture ] of b
+  
+  ( foreach culture-a culture-b
+    [ [ trait-a trait-b] -> 
+      if trait-a = trait-b [
+        set overlap overlap + 1
+      ]
+    ])
+  report overlap
+end
+
+to assimilate [a b]
+  let culture-a [culture] of a
+  let culture-b [culture] of b
+  
+  let diff-indices []
+
+  (let i 0)
+  while [i < F] [
+    if item i culture-a != item i culture-b [
+      set diff-indices lput i diff-indices
+    ]
+    set i i + 1
+  ]
+  
+  if empty? diff-indices [ stop ]
+  
+  let chosen-index one-of diff-indices
+
+;   let chosen-index random F
+;   let attempts 0
+;   while [item chosen-index culture-a = item chosen-index culture-b and attempts < F] [
+;     set chosen-index random F
+;     set attempts attempts + 1
+;   ]
+;   if attempts = F [ stop ]  ;; no differences (shouldn't happen given interaction-prob check)
+
+  ; let support-i trait-support a chosen-index (item chosen-index culture-a) a
+  let support-i trait-support a chosen-index (item chosen-index culture-a) 
+  let support-j trait-support a chosen-index (item chosen-index culture-b) 
+  let switch-prob support-j / (support-i + support-j)
+
+  if random-float 1 < ( ( 1 - alpha ) * switch-prob + alpha ) [
+    ask a [ set culture replace-item chosen-index culture-a (item chosen-index culture-b) ]
+    update-active-links-for a
+    set interaction-count interaction-count + 1
+;     show(word 
+;       "Events: " event-count 
+;       " | Interactions: " interaction-count
+;     )
+  ]
+end
+
+to-report interaction-possible?
+  let result false
+
+  ask turtles [
+    ask turtles-on neighbors4 [          ;; self = neighbor turtle
+      let overlap similarity myself self  ;; myself = outer turtle, self = neighbor
+      if overlap > 0 and overlap < F [
+        set result true
+      ]
+    ]
+  ]
+  report result
+end
+
+to-report trait-support [agent feature-index trait-value] ;ref-agent
+  let cnt 0
+  if item feature-index ([culture] of agent) = trait-value [ set cnt cnt + 1 ]
+  foreach (sort [neighbors-list] of agent) [ neighbor ->
+    if item feature-index ([culture] of neighbor) = trait-value [ set cnt cnt + 1 ]
+  ]
+  report cnt
+end
+
+to-report interaction-rate
+  if event-count = 0 [ report 0 ]
+  report interaction-count / event-count
+end
+
+; to-report active-links
+;   report active-link-count
+; end
+
+to-report active-links
+  let count1 0
+
+  ask turtles [
+    ask turtles-on neighbors4 [
+      let overlap similarity myself self
+      if overlap > 0 and overlap < F [
+        set count1 count1 + 1
+      ]
+    ]
+  ]
+  report count1 / 2
+end
+
+to-report unique-cultures
+  report length remove-duplicates [culture] of turtles
+end
+
+to-report number-of-regions
+
+  ask turtles [ set visited false ]
+  let regions 0
+
+  while [any? turtles with [not visited]] [
+    let seed one-of turtles with [not visited]
+    set regions regions + 1
+    grow-region seed
+  ]
+  report regions
+end
+
+to grow-region [seed]
+
+  let target [culture] of seed
+  let frontier (list seed)
+
+  while [length frontier > 0] [
+    let current first frontier
+    set frontier but-first frontier
+    ask current [
+      if not visited [
+        set visited true
+        let same-neighbors (turtles-on neighbors4) with [
+          culture = target and not visited
+        ]
+        set frontier sentence frontier sort same-neighbors
+      ]
+    ]
+  ]
+end
+
+to flood-fill [start-turtle]
+  let target-culture [culture] of start-turtle
+  let stack (list start-turtle)
+
+  while [length stack > 0] [
+    let current first stack
+    set stack but-first stack
+    
+    ask current [
+      if not visited [
+        set visited true
+
+        let neighbors-with-same-culture
+          (turtles-on neighbors4) with [culture = target-culture]  ;; fix: parentheses
+        set stack sentence stack sort neighbors-with-same-culture  ;; sort to convert agentset to list
+      ]
+    ]
+  ]
+end
+
+to-report culture-color [culture-list]
+
+  let hash 0
+  foreach culture-list [ t ->
+    set hash (hash * 7 + t)
+  ]
+  report (hash mod 140)
+end
+
+to update-turtle-colors
+  ask turtles [
+    set color culture-color culture
+  ]
+end
+
+to update-active-links-for [agent]
+;   ask [my-links] of agent [
+;     let ov similarity end1 end2
+; ;     let before ((similarity end1 end2) > 0 and (similarity end1 end2) < F)
+
+; ;     let s similarity end1 end2
+; ;     let after (s > 0 and s < F)
+
+; ;     if before and not after [
+; ;       set active-link-count active-link-count - 1
+; ;     ]
+
+; ;     if not before and after [
+; ;       set active-link-count active-link-count + 1
+; ;     ]
+;   ]
+  ask [my-links] of agent [
+    
+    ;; OLD state
+    let was-active is-active?
+    
+    ;; NEW state
+    let ov similarity end1 end2
+    let now-active (ov > 0 and ov < F)
+    
+    ;; Update global count
+    if (was-active and not now-active) [
+      set active-link-count active-link-count - 1
+    ]
+    if (not was-active and now-active) [
+      set active-link-count active-link-count + 1
+    ]
+    
+    ;; Store new state
+    set is-active? now-active
+    
+    ;; 🔥 ADD THIS (visual update)
+    if ov = F [
+      set color white
+    ]
+    if ov < F [
+      set color black
+    ]
+  ]
+end
+
+;;    -------------------   Start Phase 3   -----------------------
+
+to-report run-model
+  setup
+  
+  while [active-link-count > 0] [
+    one-event
+  ]
+
+  report (list
+    event-count
+    interaction-count
+    interaction-rate
+    number-of-regions
+    unique-cultures
+    largest-region-fraction  
+  )
+
+end
+
+to-report run-experiments [runs]
+  let results []
+
+  repeat runs [
+    set results lput (run-model) results
+  ]
+  report results
+end
+
+to-report average [lst]
+  report mean lst
+end
+
+to-report summarize-results [results]
+
+  let events map [r -> item 0 r] results
+  let interactions map [r -> item 1 r] results
+  let rates map [r -> item 2 r] results
+  let regions map [r -> item 3 r] results
+  let cultures map [r -> item 4 r] results
+  let largest map [r -> item 5 r] results 
+  report (list
+    average events
+    average interactions
+    average rates
+    average regions
+    average cultures
+    average largest)
+end
+
+to-report absorbing?
+  report active-links = 0
+end
+
+;;  ---------------  find the size of largets region ---------------
+to-report grow-region-size [seed]
+
+  let target [culture] of seed
+  let frontier (list seed)
+  let total-size 0
+
+  while [length frontier > 0] [
+    let current first frontier
+    set frontier but-first frontier
+
+    ask current [
+      if not visited [
+        set visited true
+        set total-size total-size + 1   ;; 🔥 COUNT HERE
+
+        let same-neighbors (turtles-on neighbors4) with [
+          culture = target and not visited
+        ]
+        set frontier sentence frontier sort same-neighbors
+      ]
+    ]
+  ]
+
+  report total-size
+end
+
+to-report largest-region-size
+
+  ask turtles [ set visited false ]
+  let max-size 0
+
+  while [any? turtles with [not visited]] [
+    let seed one-of turtles with [not visited]
+    let total-size grow-region-size seed
+
+    if total-size > max-size [
+      set max-size total-size
+    ]
+  ]
+
+  report max-size
+end
+
+to-report largest-region-fraction
+  report largest-region-size / count turtles
+end
+
+to-report zone-size-distribution
+
+  ask turtles [ set visited false ]
+  let sizes []
+
+  while [any? turtles with [not visited]] [
+    let seed one-of turtles with [not visited]
+    let s grow-region-size seed
+    set sizes lput s sizes
+  ]
+
+  report sizes
+end
+to-report zone-size-histogram
+  let sizes zone-size-distribution
+  let unique-sizes remove-duplicates sizes
+  
+  ;; This does the exact same thing as your loop in one line
+  report map [ s -> list s (length filter [x -> x = s] sizes) ] unique-sizes
+end
